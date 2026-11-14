@@ -1,0 +1,10 @@
+{
+  "name": "sentinel-ai-research-lab",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first academic interface and PyTorch backend for multimodal robustness research",
+  "scripts": {
+    "serve": "node frontend/serve.mjs"
+  },
+  "engines": { "node": ">=18" }
+}
