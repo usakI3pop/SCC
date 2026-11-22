@@ -1,37 +1,828 @@
-(() => {
-  const API = localStorage.getItem('sentinel-api') || 'http://127.0.0.1:8000';
-  const $ = (q, root=document) => root.querySelector(q);
-  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const pages = {overview:'Overview','attack-lab':'Attack laboratory',camera:'Security camera test',driving:'Road image test','cross-modal':'Cross-modal vulnerability analyzer',defense:'Adaptive defense center',models:'Model comparison',research:'Research & experiments',settings:'Settings'};
-  let experiments = [], health = null, lastAttack = null, lastAttackFile = null, lastSweep = null, toastTimer;
-  const theme = localStorage.getItem('sentinel-theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-  document.body.classList.toggle('light', theme === 'light'); $('#theme-icon').textContent = theme === 'light' ? '☼' : '☾';
-  $('#theme-toggle').onclick = () => { document.body.classList.toggle('light'); const t=document.body.classList.contains('light')?'light':'dark';localStorage.setItem('sentinel-theme',t);$('#theme-icon').textContent=t==='light'?'☼':'☾'; };
-  function toast(msg){const el=$('#toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2800)}
-  async function request(path, options={}){const r=await fetch(API+path,options);if(!r.ok){let m=`API error ${r.status}`;try{m=(await r.json()).detail||m}catch{}throw Error(m)}return r.json()}
-  async function refresh(){try{[health,experiments]=await Promise.all([request('/api/health'),request('/api/experiments')]);$('#status-dot').className='status-dot online';$('#status-text').textContent=`API online · ${health.device.toUpperCase()}`;$('#model-state').textContent=health.model_loaded?'Model loaded':`Model loads on first run · ${health.device}`;render()}catch(e){health=null;experiments=[];$('#status-dot').className='status-dot offline';$('#status-text').textContent='API offline';$('#model-state').textContent='Backend offline';render()}}
-  const head=(eyebrow,title,desc,action='')=>`<div class="page-head"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p>${desc}</p></div>${action?`<div class="head-actions">${action}</div>`:''}</div>`;
-  const card=(title,sub,body,extra='')=>`<section class="card ${extra}"><div class="card-head"><div><div class="card-title">${title}</div>${sub?`<div class="card-sub">${sub}</div>`:''}</div></div>${body}</section>`;
-  function metric(name,value,foot,icon='◈'){return `<div class="card metric"><div class="metric-head">${name}<span class="metric-icon">${icon}</span></div><div class="metric-value ${value==='—'?'blank':''}">${value}</div><div class="metric-foot">${foot}</div></div>`}
-  function chart(title,sub){if(!experiments.length)return card(title,sub,`<div class="card-body"><div class="chart-area"><div class="chart-grid"><span></span><span></span><span></span><span></span></div><div class="empty-chart">Run experiments to populate this chart</div></div></div>`);const rows=[...experiments].reverse().slice(-12),w=520,h=190,p=32,x=i=>p+i*(w-2*p)/Math.max(rows.length-1,1),y=v=>h-p-(v+1)*(h-2*p)/2,clean=rows.map((r,i)=>`${x(i)},${y(Number(r.clean_similarity))}`).join(' '),adv=rows.map((r,i)=>`${x(i)},${y(Number(r.adversarial_similarity))}`).join(' ');return card(title,sub,`<div class="card-body"><div style="overflow:auto"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Measured clean and adversarial cosine similarities for recorded runs" style="width:100%;min-width:360px"><line x1="${p}" y1="${p}" x2="${w-p}" y2="${p}" stroke="currentColor" opacity=".15"/><line x1="${p}" y1="${h/2}" x2="${w-p}" y2="${h/2}" stroke="currentColor" opacity=".15"/><line x1="${p}" y1="${h-p}" x2="${w-p}" y2="${h-p}" stroke="currentColor" opacity=".25"/><polyline fill="none" stroke="#65d8bd" stroke-width="2.5" points="${clean}"/><polyline fill="none" stroke="#7ea7ff" stroke-width="2.5" points="${adv}"/>${rows.map((r,i)=>`<circle cx="${x(i)}" cy="${y(Number(r.clean_similarity))}" r="3.5" fill="#65d8bd"><title>${esc(r.attack)} · clean ${Number(r.clean_similarity).toFixed(5)}</title></circle><circle cx="${x(i)}" cy="${y(Number(r.adversarial_similarity))}" r="3.5" fill="#7ea7ff"><title>${esc(r.attack)} · adversarial ${Number(r.adversarial_similarity).toFixed(5)}</title></circle>`).join('')}<text x="${p}" y="15" fill="currentColor" font-size="10">CLIP cosine · ${rows.length} most recent runs</text></svg></div><div class="tiny-label"><span style="color:#65d8bd">● Clean</span> &nbsp; <span style="color:#7ea7ff">● Adversarial</span></div></div>`) }
-  function overview(){const n=experiments.length,mean=(key)=>n?(experiments.reduce((a,x)=>a+Number(x[key]||0),0)/n).toFixed(3):'—';return `${head('RESEARCH OVERVIEW','Good evening, researcher.','A live view of the Sentinel research environment. Statistics appear after measured experiments.',`<button class="btn ghost" id="refresh">↻ &nbsp;Refresh</button><a class="btn primary" href="#attack-lab">＋ &nbsp;New experiment</a>`)}<div class="grid metrics">${metric('Experiments conducted',n,n?'Saved local runs':'No experiment records yet','▧')}${metric('Mean clean similarity',mean('clean_similarity'),n?'Across saved CLIP runs':'No measured results','◉')}${metric('Mean adversarial similarity',mean('adversarial_similarity'),n?'Across saved CLIP runs':'No measured results','⌁')}${metric('Hardware',health?.device?.toUpperCase()||'—',health?.gpu||'Connect the local API to inspect','⌘')}</div><div class="grid dash-grid">${chart('Similarity under attack','Recorded cosine similarities from completed image-text attacks')}${chart('Experiment activity','Saved experiment records over time')}</div><div class="grid dash-grid2">${card('Recent experiments','Latest saved runs',`<div class="card-body mini-list">${n?experiments.slice(0,4).map(e=>`<div class="list-row"><span><b>${esc(e.attack)} · CLIP ViT-B/32</b><small>${new Date(e.created_at).toLocaleString()}</small></span><span class="tag blue">ε ${Number(e.epsilon).toFixed(3)}</span></div>`).join(''):`<div class="empty-state"><span class="empty-icon">◌</span>No experiment records yet. Start with an image-text attack.</div>`}</div>`)}${card('System status','Local inference environment',`<div class="card-body"><div class="list-row"><span><b>API connection</b><small>${health?'Research backend responds':'Start the backend to enable model inference'}</small></span><span class="tag ${health?'green':'amber'}">${health?'ONLINE':'OFFLINE'}</span></div><div class="list-row"><span><b>Vision-language model</b><small>${health?.model||'openai/clip-vit-base-patch32'}</small></span><span class="tag ${health?.model_loaded?'green':'amber'}">${health?.model_loaded?'READY':'ON DEMAND'}</span></div><div class="list-row"><span><b>CUDA acceleration</b><small>${health?.gpu||'CPU mode or backend offline'}</small></span><span class="tag ${health?.cuda_available?'green':'blue'}">${health?.cuda_available?'AVAILABLE':'CPU'}</span></div></div>`)}</div>`}
-  function attackLab(){return `${head('EXPERIMENTS / IMAGE ATTACKS','Attack laboratory','Run gradient and localized attacks against the open-weight CLIP model.')}<div class="notice info" style="margin-bottom:13px"><strong>Measured inference.</strong> FGSM, PGD, shared universal perturbations and optimized patches run against actual CLIP image-text similarities. Images stay on this machine. Attack success is measured, never assumed.</div><div class="split"><section class="card"><div class="card-head"><div><div class="card-title">Configure attack</div><div class="card-sub">Images are resized to 224 × 224 RGB for CLIP.</div></div></div><form id="attack-form" class="form-card"><div class="field"><label>Attack method</label><select name="method" id="method"><option value="FGSM">FGSM · one-step gradient</option><option value="PGD">PGD · iterative gradient</option><option value="UAP">Universal · shared batch perturbation</option><option value="PATCH">Adversarial patch · optimized region</option></select></div><div class="field" id="single-upload"><label>Input image <span class="hint">PNG, JPEG, WEBP · max 25 MB</span></label><div class="upload-drop">Choose a local image<input class="input" type="file" name="image" accept="image/png,image/jpeg,image/webp" required></div></div><div class="field" id="batch-upload" style="display:none"><label>Image batch <span class="hint">1–8 local images</span></label><div class="upload-drop">Choose images for shared optimization<input class="input" type="file" name="images" accept="image/png,image/jpeg,image/webp" multiple></div></div><div class="field"><label>Reference description <span class="hint">Measured before / after</span></label><input class="input" name="reference_text" required maxlength="250" value="A photo of a dog"></div><div class="field"><label>Target description <span class="hint">Optimization objective</span></label><input class="input" name="target_text" required maxlength="250" value="A photo of a cat"></div><div id="epsilon-fields"><div class="field"><label>Perturbation budget <span class="hint">L∞ RGB pixel space</span></label><div class="range-line"><input type="range" name="epsilon" min="0.005" max="0.12" step="0.005" value="0.03"><span class="range-val" id="eps-val">0.030</span></div></div></div><div id="iter-fields" style="display:none"><div class="form-row"><div class="field"><label>Step size</label><input class="input" name="step_size" type="number" min="0.001" max="0.1" step="0.001" value="0.005"></div><div class="field"><label>Iterations</label><input class="input" name="iterations" type="number" min="1" max="100" value="10"></div></div><label class="check-line"><input type="checkbox" name="random_start" checked> Random initialization</label></div><div id="patch-fields" style="display:none"><div class="form-row"><div class="field"><label>Patch width / height</label><div class="range-line"><input type="range" name="patch_fraction" min="0.05" max="0.5" step="0.01" value="0.15"><span class="range-val" id="patch-val">15%</span></div></div><div class="field"><label>Patch iterations</label><input class="input" name="patch_iterations" type="number" min="1" max="200" value="40"></div></div><div class="form-row"><div class="field"><label>Horizontal center</label><input type="range" name="x_center" min="0" max="1" step="0.05" value="0.5"></div><div class="field"><label>Vertical center</label><input type="range" name="y_center" min="0" max="1" step="0.05" value="0.5"></div></div></div><button class="btn primary" id="run-attack" type="submit" style="width:100%">▶ &nbsp;Run measured attack</button><div class="progress"><i id="attack-progress"></i></div><p class="tiny-label" id="attack-message" style="line-height:1.6">Requires the local API and model weights. No results are generated offline.</p></form></section><section class="card output-card"><div class="card-head"><div><div class="card-title">Attack output</div><div class="card-sub">Actual model scores · first sample shown for batches</div></div><span class="tag" id="run-tag">WAITING</span></div><div class="output-grid"><div><div class="preview-label">ORIGINAL</div><div class="preview" id="original-preview">Original image</div></div><div><div class="preview-label">ATTACKED</div><div class="preview" id="adversarial-preview">Run an attack</div></div><div><div class="preview-label" id="perturb-label">PERTURBATION · AMPLIFIED</div><div class="preview" id="perturb-preview">No perturbation</div></div></div><div class="result-info"><div class="result-row"><div class="result-box"><small>Reference · clean mean</small><b id="clean-score">—</b></div><div class="result-box"><small>Reference · attacked mean</small><b id="adv-score">—</b></div><div class="result-box"><small id="linf-label">Measured L∞ distance</small><b id="linf-score">—</b></div></div><div class="notice" style="margin-top:10px" id="attack-result-note">Target and reference similarities are measurements, not proof of semantic-preserving attack success.</div></div></section></div>${adaptiveSection()}`}
-  function simPage(kind){const camera=kind==='camera';const title=camera?'Security camera image test':'Road scene image test';const copy=camera?'Upload a camera frame and compare it with scene descriptions you provide. This does not identify a person or verify credentials.':'Upload a road scene and compare it with traffic-scene descriptions you provide. This does not detect objects or certify a driving decision.';const prompts=camera?'A person is visible near an entryway\nAn empty entryway\nA package is visible near the door':'A stop sign is visible at an intersection\nA pedestrian is crossing the road\nA traffic light is visible\nAn empty road with no visible traffic signs';return `${head(camera?'CAMERA / LOCAL IMAGE ANALYSIS':'ROAD / LOCAL IMAGE ANALYSIS',title,copy)}<div class="notice warning" style="margin-bottom:13px"><strong>ACADEMIC RESEARCH ONLY.</strong> Uploads are sent to the local API for CLIP comparison and are not saved. Similarity is not an identity check, object detector, access decision, or vehicle control signal.</div><div class="sim-layout"><section class="card"><div class="card-head"><div><div class="card-title">Analyze an uploaded image</div><div class="card-sub">Choose any image you are authorized to test.</div></div><span class="tag blue">LOCAL MODEL</span></div><form class="form-card" id="scene-form"><div class="field"><label>Image file <span class="hint">PNG, JPEG, WEBP · max 25 MB</span></label><input class="input" type="file" name="image" accept="image/png,image/jpeg,image/webp" required></div><div class="preview-label" style="margin-bottom:6px">LOCAL PREVIEW</div><div class="preview" id="scene-preview" style="aspect-ratio:16/9;margin-bottom:13px">Choose an image to preview it here</div><div class="field"><label>Candidate scene descriptions <span class="hint">2–8 lines · editable</span></label><textarea class="input" name="prompts" rows="5" required>${prompts}</textarea><span class="tiny-label">CLIP ranks these descriptions against the uploaded image.</span></div><button class="btn primary" type="submit" id="scene-run">◉ &nbsp;Analyze with CLIP</button><div class="progress"><i id="scene-progress"></i></div><p id="scene-message" class="tiny-label" style="line-height:1.6">The image is processed locally by the configured model. It is not written to experiment history.</p></form></section><section class="card"><div class="card-head"><div><div class="card-title">Measured image-text scores</div><div class="card-sub">Ranking for the descriptions you entered</div></div><span class="tag" id="scene-tag">WAITING</span></div><div class="card-body"><div class="empty-state" id="scene-empty"><span class="empty-icon">◉</span>Upload an image and run the model to see measured scores.</div><div id="scene-results"></div><div class="notice ${camera?'warning':'info'}" style="margin-top:12px">${camera?'<strong>Access-control boundary:</strong> No face or identity matching is performed. A credential cannot be confirmed from image similarity. Use independent human verification.':'<strong>Driving boundary:</strong> Scores are CLIP text alignment, not detection confidence. Keep every result inside this simulation; never use it to control a real vehicle.'}</div></div></section></div>`}
-  function adaptiveSection(){return `<div class="grid dash-grid2" style="margin-top:14px"><section class="card"><div class="card-head"><div><div class="card-title">Adaptive perturbation analysis</div><div class="card-sub">One source image, one model and fixed attack settings across strengths</div></div><span class="tag blue">FGSM / PGD</span></div><div class="form-card"><div class="form-row"><div class="field"><label>Attack method</label><select id="sweep-method"><option>FGSM</option><option>PGD</option></select></div><div class="field"><label>Strengths · L∞ ε</label><input class="input" id="sweep-strengths" value="0.01, 0.03, 0.06, 0.10"><span class="tiny-label">2–8 distinct values, each from 0 to 0.25</span></div></div><div class="form-row"><div class="field"><label>PGD step size</label><input class="input" id="sweep-step" type="number" min="0.001" max="0.1" step="0.001" value="0.005"></div><div class="field"><label>PGD iterations</label><input class="input" id="sweep-iterations" type="number" min="1" max="100" value="10"></div></div><label class="check-line"><input type="checkbox" id="sweep-random-start"> PGD random initialization (same seed per strength)</label><button id="run-sweep" class="btn primary">↗ Run strength comparison</button><div class="progress"><i id="sweep-progress"></i></div><p id="sweep-message" class="tiny-label" style="line-height:1.6">Uses the image and reference/target prompts above. Select an image and complete those fields first.</p><div id="sweep-results"></div></div></section><section class="card"><div class="card-head"><div><div class="card-title">Prompt sensitivity comparison</div><div class="card-sub">Compare editable prompts on the clean image and the latest actual adversarial output</div></div></div><div class="form-card"><div class="notice info" style="margin-bottom:12px">Enabled after an attack run. Similarity is image-text alignment, not classification probability or a proven defense.</div><div class="field"><label>Standard prompt</label><input class="input" id="prompt-standard" maxlength="250" value="A dog."></div><div class="field"><label>Detailed prompt</label><input class="input" id="prompt-detailed" maxlength="250" value="A photograph of a dog standing outdoors."></div><div class="field"><label>Verification-oriented prompt</label><input class="input" id="prompt-verification" maxlength="250" value="Carefully examine the visual content and identify the animal shown."></div><button id="run-prompt-comparison" class="btn" disabled>⌕ Compare prompts on latest run</button><p class="tiny-label" id="prompt-message" style="line-height:1.6;margin-top:9px">Run FGSM, PGD, or a sweep to enable this comparison.</p><div id="prompt-results"></div></div></section></div>`}
-  function sweepChart(rows){const w=520,h=190,p=30,x=i=>p+i*(w-2*p)/Math.max(rows.length-1,1),y=v=>h-p-(v+1)*(h-2*p)/2,points=key=>rows.map((r,i)=>`${x(i)},${y(r[key])}`).join(' ');return `<div style="overflow:auto;margin:12px 0"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Clean and adversarial CLIP cosine similarities across perturbation strengths" style="width:100%;min-width:360px"><line x1="${p}" y1="${h-p}" x2="${w-p}" y2="${h-p}" stroke="currentColor" opacity=".25"/><line x1="${p}" y1="${p}" x2="${w-p}" y2="${p}" stroke="currentColor" opacity=".15"/><polyline fill="none" stroke="#65d8bd" stroke-width="2.5" points="${points('clean_similarity')}"/><polyline fill="none" stroke="#7ea7ff" stroke-width="2.5" points="${points('adversarial_similarity')}"/>${rows.map((r,i)=>`<circle cx="${x(i)}" cy="${y(r.clean_similarity)}" r="4" fill="#65d8bd"><title>ε ${r.epsilon}: clean cosine ${r.clean_similarity.toFixed(5)}</title></circle><circle cx="${x(i)}" cy="${y(r.adversarial_similarity)}" r="4" fill="#7ea7ff"><title>ε ${r.epsilon}: adversarial cosine ${r.adversarial_similarity.toFixed(5)}</title></circle><text x="${x(i)}" y="${h-8}" text-anchor="middle" fill="currentColor" font-size="10">${r.epsilon.toFixed(3)}</text>`).join('')}<text x="${p}" y="15" fill="currentColor" font-size="10">CLIP cosine</text></svg></div><div class="tiny-label"><span style="color:#65d8bd">● Clean reference similarity</span> &nbsp; <span style="color:#7ea7ff">● Adversarial reference similarity</span></div>`}
-  async function runSweep(){const file=$('[name=image]')?.files?.[0],reference=$('[name=reference_text]')?.value.trim(),target=$('[name=target_text]')?.value.trim();if(!file?.size){toast('Choose one image in the attack form before starting a sweep.');return}if(!reference||!target){toast('Enter both reference and target descriptions first.');return}const btn=$('#run-sweep'),msg=$('#sweep-message'),bar=$('#sweep-progress'),data=new FormData();data.set('image',file);data.set('reference_text',reference);data.set('target_text',target);data.set('method',$('#sweep-method').value);data.set('strengths',$('#sweep-strengths').value);data.set('step_size',$('#sweep-step').value);data.set('iterations',$('#sweep-iterations').value);data.set('random_start',$('#sweep-random-start').checked?'true':'false');btn.disabled=true;msg.textContent='Generating actual adversarial images and measuring each with the same CLIP model…';bar.style.width='18%';let tick=0;const timer=setInterval(()=>{tick++;bar.style.width=Math.min(92,18+tick*4)+'%'},700);try{const result=await request('/api/attack/sweep',{method:'POST',body:data});lastSweep=result;const final=result.results.at(-1);lastAttack={attack:result.attack,model:result.model,device:result.device,clean_similarity:final.clean_similarity,adversarial_similarity:final.adversarial_similarity,linf:final.linf,elapsed_ms:result.results.reduce((n,r)=>n+r.elapsed_ms,0),target_similarity_clean:final.target_similarity_clean,target_similarity_adversarial:final.target_similarity_adversarial,original_png:result.original_png,adversarial_png:final.adversarial_png,id:result.results.map(r=>r.id).join(',')};lastAttackFile=file;$('#original-preview').innerHTML=`<img alt="Original image used in strength sweep" src="data:image/png;base64,${result.original_png}">`;$('#adversarial-preview').innerHTML=`<img alt="Adversarial image at strength ${final.epsilon}" src="data:image/png;base64,${final.adversarial_png}">`;$('#clean-score').textContent=final.clean_similarity.toFixed(5);$('#adv-score').textContent=final.adversarial_similarity.toFixed(5);$('#linf-score').textContent=final.linf.toFixed(5);$('#run-prompt-comparison').disabled=false;$('#sweep-results').innerHTML=`${sweepChart(result.results)}<div class="output-grid">${result.results.map(r=>`<div><div class="preview-label">ε ${r.epsilon.toFixed(3)} · L∞ ${r.linf.toFixed(5)}</div><div class="preview"><img alt="Adversarial image at strength ${r.epsilon}" src="data:image/png;base64,${r.adversarial_png}"></div><div class="tiny-label" style="margin-top:5px">Reference cosine ${r.clean_similarity.toFixed(4)} → ${r.adversarial_similarity.toFixed(4)} · ${r.elapsed_ms.toFixed(0)} ms</div></div>`).join('')}</div><div class="notice info">${esc(result.metric_note)}</div>`;msg.textContent=`${result.attack} sweep completed on ${result.device.toUpperCase()}. All ${result.results.length} strengths were saved as separate runs.`;experiments=await request('/api/experiments');toast('Strength comparison completed with measured CLIP outputs.')}catch(e){msg.textContent=e.message;toast(e.message)}finally{clearInterval(timer);bar.style.width='0';btn.disabled=false}}
-  function imageFileFromBase64(value,name){const bytes=Uint8Array.from(atob(value),c=>c.charCodeAt(0));return new File([bytes],name,{type:'image/png'})}
-  function promptChart(rows){const w=500,h=150,left=155,right=490,x=v=>left+(v+1)*(right-left)/2,ys=[30,72,114];return `<div style="overflow:auto;margin:12px 0"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Clean and adversarial image-text cosine similarity by prompt" style="width:100%;min-width:360px"><line x1="${left}" y1="14" x2="${left}" y2="128" stroke="currentColor" opacity=".25"/><line x1="${(left+right)/2}" y1="14" x2="${(left+right)/2}" y2="128" stroke="currentColor" opacity=".3"/><line x1="${right}" y1="14" x2="${right}" y2="128" stroke="currentColor" opacity=".25"/>${rows.map((r,i)=>`<text x="${left-8}" y="${ys[i]+4}" text-anchor="end" fill="currentColor" font-size="10">${esc(r.kind)}</text><line x1="${x(r.clean_similarity)}" y1="${ys[i]}" x2="${x(r.adversarial_similarity)}" y2="${ys[i]}" stroke="#8795aa" stroke-width="2"/><circle cx="${x(r.clean_similarity)}" cy="${ys[i]}" r="5" fill="#65d8bd"><title>${esc(r.kind)} clean cosine ${r.clean_similarity.toFixed(5)}</title></circle><circle cx="${x(r.adversarial_similarity)}" cy="${ys[i]}" r="5" fill="#7ea7ff"><title>${esc(r.kind)} adversarial cosine ${r.adversarial_similarity.toFixed(5)}</title></circle>`).join('')}<text x="${left}" y="145" fill="currentColor" font-size="9">−1</text><text x="${(left+right)/2}" y="145" text-anchor="middle" fill="currentColor" font-size="9">0</text><text x="${right}" y="145" text-anchor="end" fill="currentColor" font-size="9">+1 cosine</text></svg></div><div class="tiny-label"><span style="color:#65d8bd">● Clean</span> &nbsp; <span style="color:#7ea7ff">● Adversarial</span></div>`}
-  async function runPromptComparison(){if(!lastAttack||!lastAttackFile){toast('Complete an attack run first.');return}const data=new FormData();data.set('image',lastAttackFile);data.set('adversarial_image',imageFileFromBase64(lastAttack.adversarial_png,'sentinel-adversarial.png'));data.set('standard_prompt',$('#prompt-standard').value);data.set('detailed_prompt',$('#prompt-detailed').value);data.set('verification_prompt',$('#prompt-verification').value);data.set('attack_method',lastAttack.attack);data.set('epsilon',String(lastSweep?lastSweep.results.at(-1).epsilon:Number($('[name=epsilon]')?.value||0)));const btn=$('#run-prompt-comparison'),msg=$('#prompt-message'),out=$('#prompt-results');btn.disabled=true;btn.textContent='◌ Scoring prompts…';msg.textContent='Computing actual clean and adversarial image-text cosine similarities…';try{const result=await request('/api/experiments/prompt-comparison',{method:'POST',body:data});out.innerHTML=`${promptChart(result.rows)}<div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>PROMPT</th><th>CLEAN COSINE</th><th>ADVERSARIAL COSINE</th><th>CHANGE</th></tr></thead><tbody>${result.rows.map(r=>`<tr><td><b>${esc(r.kind)}</b><br>${esc(r.prompt)}</td><td>${r.clean_similarity.toFixed(5)}</td><td>${r.adversarial_similarity.toFixed(5)}</td><td>${r.change>=0?'+':''}${r.change.toFixed(5)}</td></tr>`).join('')}</tbody></table></div><div class="notice info" style="margin-top:10px">Highest clean similarity: <strong>${esc(result.best_clean_prompt)}</strong>. Highest adversarial similarity: <strong>${esc(result.best_adversarial_prompt)}</strong>. ${esc(result.metric_note)}</div>`;msg.textContent=`Measured and saved as experiment ${result.id.slice(0,8)}.`;experiments=await request('/api/experiments');toast('Prompt comparison completed with actual CLIP scores.')}catch(e){msg.textContent=e.message;toast(e.message)}finally{btn.disabled=false;btn.textContent='⌕ Compare prompts on latest run'}}
-  function crossModal(){return `${head('ANALYSIS / REPRESENTATIONS','Cross-modal vulnerability analyzer','Inspect image-text embedding alignment and objective conflict from an actual attack run.')}<div class="notice info" style="margin-bottom:13px">Embedding views require a completed image attack and its actual CLIP scores. The 2D diagram is illustrative; a projection cannot preserve all high-dimensional relationships.</div><div class="grid dash-grid"><section class="card"><div class="card-head"><div><div class="card-title">Image ↔ text alignment</div><div class="card-sub">Cosine similarity from the latest completed experiment</div></div><button class="btn ghost" id="reload-cross">↻ Refresh</button></div><div class="card-body"><div class="embed-box"><i class="embed-axis x"></i><i class="embed-axis y"></i>${lastAttack?`<span class="embed-point" style="left:65%;top:35%"></span><span class="embed-point text" style="left:${Math.max(17,65-((lastAttack.adversarial_similarity-lastAttack.clean_similarity)*90))}%;top:58%"></span>`:''}<div class="embed-legend"><span><i></i>Image · measured run</span><span><i class="blue-dot"></i>Text · diagram only</span></div>${!lastAttack?'<div class="empty-chart" style="position:absolute;inset:0">Run an attack to load measured results</div>':''}</div></div></section>${card('Measured similarity','Actual CLIP cosine similarity',`<div class="card-body"><div class="result-row"><div class="result-box"><small>Clean</small><b>${lastAttack?lastAttack.clean_similarity.toFixed(4):'—'}</b></div><div class="result-box"><small>Adversarial</small><b>${lastAttack?lastAttack.adversarial_similarity.toFixed(4):'—'}</b></div><div class="result-box"><small>Δ similarity</small><b>${lastAttack?(lastAttack.adversarial_similarity-lastAttack.clean_similarity).toFixed(4):'—'}</b></div></div><p class="tiny-label" style="margin-top:13px">The backend objective maximizes target-prompt similarity; the reference score may rise or fall. Direction is an observation, not a guaranteed attack outcome.</p></div>`)}</div><div class="grid dash-grid2" style="margin-top:14px">${card('Gradient conflict analysis','g₁ · image objective | g₂ · text objective',`<div class="card-body"><div class="empty-state"><span class="empty-icon">⤨</span>Cross-objective gradient extraction is not yet implemented.<br>Cosine conflict is not inferred from similarity scores.</div></div>`)}${card('Embedding projection','PCA / t-SNE visualization',`<div class="card-body"><div class="empty-state"><span class="empty-icon">⌗</span>Requires stored model embeddings from the backend.</div></div>`)}</div>`}
-  function defense(){return `${head('MITIGATION / ANALYSIS','Adaptive defense center','Transparent anomaly scoring and conservative responses for research evaluation.')}<div class="notice warning" style="margin-bottom:14px"><strong>Research prototype.</strong> The current detector is an explicit heuristic, not a trained classifier and not validated against held-out attacks. It does not claim to neutralize attacks.</div><div class="grid dash-grid"><section class="card"><div class="card-head"><div><div class="card-title">Analyze latest measured run</div><div class="card-sub">Uses model scores and perturbation metrics from the last attack.</div></div></div><div class="card-body"><div class="result-row"><div class="result-box"><small>Clean similarity</small><b>${lastAttack?lastAttack.clean_similarity.toFixed(4):'—'}</b></div><div class="result-box"><small>Adversarial similarity</small><b>${lastAttack?lastAttack.adversarial_similarity.toFixed(4):'—'}</b></div><div class="result-box"><small>Measured L∞</small><b>${lastAttack?lastAttack.linf.toFixed(4):'—'}</b></div></div><button class="btn primary" id="analyze-defense" style="margin-top:12px" ${lastAttack?'':'disabled'}>◇ &nbsp;Run transparent detector</button><div id="defense-output" style="margin-top:12px"></div></div></section>${card('Adaptive response policy','Conservative routing by detected input type',`<div class="card-body mini-list"><div class="list-row"><span><b>Image suspicious</b><small>Transformation consistency + review</small></span><span class="tag blue">RULE</span></div><div class="list-row"><span><b>Text suspicious</b><small>Normalization + semantic checks</small></span><span class="tag amber">PLANNED</span></div><div class="list-row"><span><b>Joint or unknown</b><small>Independent verification / human review</small></span><span class="tag amber">PLANNED</span></div></div>`)}</div><div class="grid metrics" style="margin-top:14px">${metric('Precision','—','Requires labeled test set')}${metric('Recall','—','Requires labeled test set')}${metric('F1 score','—','Requires labeled test set')}${metric('False-positive rate','—','Requires labeled test set')}</div>`}
-  function models(){return `${head('EVALUATION / MODELS','Model comparison','Compare only models that support the same task and report compatible metrics.')}<div class="notice info" style="margin-bottom:13px">The initial backend supports CLIP ViT-B/32 image-text similarity. No second compatible model is configured; comparison values are left blank rather than fabricated.</div>${card('Configured model registry','Model capability and availability',`<div class="table-wrap"><table><thead><tr><th>MODEL</th><th>TASK</th><th>DEVICE</th><th>STATUS</th><th>MEASURED RUNS</th></tr></thead><tbody><tr><td>openai/clip-vit-base-patch32</td><td>Image-text cosine similarity</td><td>${health?.device||'—'}</td><td><span class="tag ${health?.model_loaded?'green':'amber'}">${health?.model_loaded?'Loaded':'On demand'}</span></td><td>${experiments.length}</td></tr><tr><td>BLIP / other compatible VLM</td><td>Not configured</td><td>—</td><td><span class="tag">Unavailable</span></td><td>—</td></tr></tbody></table></div>`)}`}
-  function research(){return `${head('RESEARCH / RECORDS','Research & experiments','Review and export saved measured runs. Uploaded scene-ranking requests are not saved.',`<a class="btn" href="${API}/api/experiments.csv" target="_blank">⇩ &nbsp;Export CSV</a><button class="btn ghost" id="refresh">↻ &nbsp;Refresh</button>`)}${card('Robustness metrics · applicability', 'Measured from recorded experiments; classification metrics require labeled predictions', `<div class="card-body"><div class="grid metrics">${metric('Latest attack time',experiments.length?`${Number(experiments[0].elapsed_ms).toFixed(0)} ms`:'—','Measured attack generation time','◷')}${metric('Latest L∞ magnitude',Number.isFinite(experiments[0]?.details?.linf)?Number(experiments[0].details.linf).toFixed(5):'—','Pixel-space distance where applicable','⌁')}${metric('Clean / robust accuracy','N/A','No ground-truth classification labels','×')}${metric('Attack success / accuracy drop','N/A','Similarity shifts are not class errors','×')}</div><div class="notice info"><strong>Definitions:</strong> Clean accuracy = correct clean predictions / labeled examples. Robust accuracy = correct adversarial predictions / labeled examples. Attack success rate = clean-correct examples made incorrect / clean-correct examples only. Accuracy drop = clean accuracy − robust accuracy. These are unavailable for the current similarity-only CLIP workflow. L∞ = max absolute pixel change; attack time covers generation only. Prompt and similarity experiments report cosine alignment, not classification accuracy.</div></div>`)}${card('Experiment history',`${experiments.length} saved runs`,`<div class="table-wrap"><table><thead><tr><th>CREATED</th><th>MODEL</th><th>ATTACK</th><th>BUDGET / PATCH</th><th>REFERENCE · CLEAN</th><th>REFERENCE · ADV</th><th>TIME</th></tr></thead><tbody>${experiments.length?experiments.map(e=>`<tr><td>${new Date(e.created_at).toLocaleString()}</td><td>${esc(e.model)}</td><td>${esc(e.attack)}</td><td>${e.attack==='Adversarial patch'?`${Math.round(Number(e.details?.patch_fraction||0)**2*100)}% patch area`:`ε ${Number(e.epsilon).toFixed(3)}`}</td><td>${Number(e.clean_similarity).toFixed(4)}</td><td>${Number(e.adversarial_similarity).toFixed(4)}</td><td>${Number(e.elapsed_ms).toFixed(0)} ms</td></tr>`).join(''):'<tr><td colspan="7"><div class="empty-state">No saved attack runs yet. Completed attacks appear here automatically.</div></td></tr>'}</tbody></table></div>`)}`}
-  function settings(){return `${head('PREFERENCES / LOCAL SETUP','Settings','Configure the local research API and inspect detected runtime capabilities.')}<div class="grid dash-grid"><section class="card"><div class="card-head"><div><div class="card-title">Backend connection</div><div class="card-sub">The interface connects to a local FastAPI process.</div></div></div><div class="form-card"><div class="field"><label>API base URL</label><input id="api-url" class="input" value="${esc(API)}"></div><button class="btn primary" id="save-api">Save and reconnect</button><p class="tiny-label" style="line-height:1.7;margin-top:12px">Default: http://127.0.0.1:8000<br>Model: ${esc(health?.model||'openai/clip-vit-base-patch32')}<br>Runtime: ${esc(health?.device||'Not connected')} ${health?.gpu?'· '+esc(health.gpu):''}</p></div></section>${card('Appearance','Theme preference',`<div class="card-body"><div class="list-row"><span><b>Color theme</b><small>Saved in this browser</small></span><button class="btn" id="settings-theme">Toggle light / dark</button></div><div class="list-row"><span><b>Operating system preference</b><small>Used on the first visit</small></span><span class="tag">RESPECTED</span></div></div>`)}</div><div style="margin-top:14px">${card('Research limitations','Current implementation status',`<div class="card-body mini-list"><div class="list-row"><span><b>FGSM / PGD</b><small>Real autograd against CLIP image-text scores</small></span><span class="tag green">IMPLEMENTED</span></div><div class="list-row"><span><b>Camera and road scenarios</b><small>Synthetic rule-based states; no identity or road model</small></span><span class="tag blue">SIMULATION</span></div><div class="list-row"><span><b>Detector evaluation</b><small>Heuristic only; no training or held-out benchmarks</small></span><span class="tag amber">LIMITED</span></div><div class="list-row"><span><b>Text / universal / patch / joint attacks</b><small>Not implemented in this build</small></span><span class="tag">NOT AVAILABLE</span></div></div>`)}</div>`}
-  function render(){let page=location.hash.slice(1)||'overview';if(!pages[page])page='overview';$('#crumb').textContent=pages[page];document.querySelectorAll('.nav-item').forEach(a=>a.classList.toggle('active',a.dataset.page===page));const views={overview, 'attack-lab':attackLab,camera:()=>simPage('camera'),driving:()=>simPage('driving'),'cross-modal':crossModal,defense,models,research,settings};$('#content').innerHTML=views[page]();bind(page)}
-  function bind(page){$('#refresh')?.addEventListener('click',refresh);$('#reload-cross')?.addEventListener('click',render);if(page==='attack-lab'){const method=$('#method');const single=$('[name=image]'),batch=$('[name=images]');const updateMethod=()=>{const multi=['UAP','PATCH'].includes(method.value);$('#single-upload').style.display=multi?'none':'block';$('#batch-upload').style.display=multi?'block':'none';single.required=!multi;batch.required=multi;$('#epsilon-fields').style.display=method.value==='PATCH'?'none':'block';$('#iter-fields').style.display=['PGD','UAP'].includes(method.value)?'block':'none';$('#patch-fields').style.display=method.value==='PATCH'?'block':'none';$('#perturb-label').textContent=method.value==='PATCH'?'OPTIMIZED PATCH':method.value==='UAP'?'SHARED PERTURBATION · AMPLIFIED':'PERTURBATION · AMPLIFIED';$('#linf-label').textContent=method.value==='PATCH'?'Patch footprint':'Measured L∞ distance'};method.onchange=updateMethod;updateMethod();$('[name=epsilon]').oninput=e=>$('#eps-val').textContent=Number(e.target.value).toFixed(3);$('[name=patch_fraction]').oninput=e=>$('#patch-val').textContent=Math.round(Number(e.target.value)*100)+'%';$('#attack-form').onsubmit=runAttack;$('#run-sweep').onclick=runSweep;$('#run-prompt-comparison').onclick=runPromptComparison}if(page==='camera'||page==='driving'){const image=$('[name=image]');image.onchange=()=>{const file=image.files[0];if(file){const url=URL.createObjectURL(file);$('#scene-preview').innerHTML=`<img alt="Local uploaded scene preview" src="${url}">`}};$('#scene-form').onsubmit=e=>runSceneAnalysis(e,page)}if(page==='defense')$('#analyze-defense')?.addEventListener('click',analyzeDefense);if(page==='settings'){ $('#save-api')?.addEventListener('click',async()=>{const v=$('#api-url').value.trim().replace(/\/$/,'');if(!/^https?:\/\//.test(v)){toast('Enter an HTTP API URL.');return}localStorage.setItem('sentinel-api',v);location.reload()});$('#settings-theme')?.addEventListener('click',()=>$('#theme-toggle').click())}}
-  async function runAttack(ev){ev.preventDefault();const form=ev.currentTarget,data=new FormData(form),method=data.get('method'),multi=['UAP','PATCH'].includes(method);const files=multi?Array.from($('[name=images]').files):[$('[name=image]').files[0]];if(!files.length||files.some(f=>!f||!f.size)){toast(multi?'Choose at least one image.':'Select an image first.');return}const btn=$('#run-attack'),progress=$('#attack-progress'),message=$('#attack-message');let endpoint='/api/attack';if(multi){data.delete('image');data.delete('images');for(const file of files)data.append('images',file);data.delete('method');if(method==='UAP'){endpoint='/api/attack/universal';data.delete('patch_fraction');data.delete('patch_iterations');data.delete('x_center');data.delete('y_center')}else{endpoint='/api/attack/patch';data.delete('epsilon');data.delete('step_size');data.delete('random_start');data.set('iterations',data.get('patch_iterations'));data.delete('patch_iterations')}}else data.delete('images');btn.disabled=true;btn.textContent='◌  Optimizing against CLIP…';$('#run-tag').textContent='RUNNING';message.textContent='Computing real image gradients; CPU runs may take a little while.';progress.style.width='15%';let ticks=0;const timer=setInterval(()=>{ticks++;progress.style.width=Math.min(92,15+ticks*4)+'%'},700);try{const result=await request(endpoint,{method:'POST',body:data});lastAttack=result;lastAttackFile=files[0];const first=result.samples?.[0];const original=first?.original_png||result.original_png,adversarial=first?.adversarial_png||result.adversarial_png,perturb=result.shared_perturbation_png||result.patch_png||result.perturbation_png;lastAttack.original_png=original;lastAttack.adversarial_png=adversarial;progress.style.width='100%';$('#run-tag').textContent='MEASURED';$('#run-tag').className='tag green';[['original-preview',original],['adversarial-preview',adversarial],['perturb-preview',perturb]].forEach(([id,b64])=>$('#'+id).innerHTML=b64?`<img alt="${id}" src="data:image/png;base64,${b64}">`:'Not applicable');$('#clean-score').textContent=Number(result.clean_similarity).toFixed(5);$('#adv-score').textContent=Number(result.adversarial_similarity).toFixed(5);$('#linf-score').textContent=result.linf==null?`${Math.round(result.patch_fraction**2*100)}% area`:Number(result.linf).toFixed(5);const extra=result.targeted_flip_rate!==undefined?` Targeted rank flips: ${(result.targeted_flip_rate*100).toFixed(1)}% of the batch.`:result.sample_count?` Batch: ${result.sample_count} images.`:'';$('#run-prompt-comparison').disabled=false;$('#attack-result-note').textContent=`Target cosine: ${Number(result.target_similarity_clean).toFixed(5)} → ${Number(result.target_similarity_adversarial).toFixed(5)}.${extra} This is a measured score change, not a general success claim.`;message.textContent=`${result.attack} completed on ${result.device.toUpperCase()} in ${Number(result.elapsed_ms).toFixed(0)} ms. Saved ${result.id.slice(0,8)} to experiment history.`;experiments=await request('/api/experiments');toast(`${result.attack} run completed and saved.`)}catch(e){$('#run-tag').textContent='ERROR';$('#run-tag').className='tag red';message.textContent=e.message;toast(e.message)}finally{clearInterval(timer);progress.style.width='0';btn.disabled=false;btn.innerHTML='▶ &nbsp;Run measured attack'}}
-  async function runSceneAnalysis(ev,page){ev.preventDefault();const form=ev.currentTarget,data=new FormData(form),imageFile=data.get('image');if(!imageFile?.size){toast('Choose an image first.');return}const button=$('#scene-run'),message=$('#scene-message'),progress=$('#scene-progress');button.disabled=true;button.textContent='◌  Scoring descriptions…';$('#scene-tag').textContent='RUNNING';message.textContent='The local CLIP model is comparing your image with the candidate descriptions.';progress.style.width='20%';try{const result=await request('/api/analyze-image',{method:'POST',body:data});const rows=result.ranking.map((r,i)=>`<div class="score-row"><div class="score-rank">${String(i+1).padStart(2,'0')}</div><div class="score-content"><b>${esc(r.description)}</b><div class="score-bar"><i style="width:${Math.max(2,r.relative_score*100)}%"></i></div></div><div class="score-values"><b>${(r.relative_score*100).toFixed(1)}%</b><small>cosine ${r.cosine_similarity.toFixed(4)}</small></div></div>`).join('');$('#scene-empty').style.display='none';$('#scene-results').innerHTML=`<div class="list-row"><span><b>Top text match</b><small>${esc(result.top_description)}</small></span><span class="tag blue">${result.top_cosine_similarity.toFixed(4)}</span></div>${rows}<p class="tiny-label" style="line-height:1.6;margin-top:10px">${esc(result.score_note)}</p>`;$('#scene-tag').textContent='MEASURED';$('#scene-tag').className='tag green';message.textContent=`Actual ${result.model} inference on ${result.device.toUpperCase()}. Image was not saved.`;progress.style.width='100%';toast(page==='camera'?'Image comparison complete. No identity was verified.':'Road-scene comparison complete. This is not a driving signal.')}catch(e){$('#scene-tag').textContent='ERROR';$('#scene-tag').className='tag red';message.textContent=e.message;toast(e.message)}finally{progress.style.width='0';button.disabled=false;button.innerHTML='◉ &nbsp;Analyze with CLIP'}}
-  async function analyzeDefense(){const out=$('#defense-output'),btn=$('#analyze-defense');btn.disabled=true;out.innerHTML='<div class="empty-state">Calculating transparent heuristic score…</div>';try{const d=await request('/api/defense/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clean_similarity:lastAttack.clean_similarity,adversarial_similarity:lastAttack.adversarial_similarity,image_linf:lastAttack.linf,transform_std:0})});out.innerHTML=`<div class="notice ${d.anomaly_score>=d.threshold?'warning':'info'}"><strong>${esc(d.classification)}</strong><br>Anomaly score: ${d.anomaly_score.toFixed(3)} · threshold ${d.threshold.toFixed(2)}<br>Recommended action: ${esc(d.recommended_action)}<br><span class="tiny-label">${esc(d.claim)}</span></div>`}catch(e){out.innerHTML=`<div class="notice warning">${esc(e.message)}</div>`}finally{btn.disabled=false}}
-  window.addEventListener('hashchange',render);refresh();
-})();
+/**
+ * Adversarial Robustness of Vision-Language Models using PGD and Self-Calibrated Consistency
+ * React JS Frontend Interface
+ */
+
+const { useState, useEffect, useMemo, createElement: h } = React;
+
+const API_BASE = "http://127.0.0.1:8000";
+
+// Standard benchmark classification presets
+const PRESETS = {
+  cifar10: ["airplane", "automobile", "bird", "cat", "deer", "dog", "frog", "horse", "ship", "truck"],
+  animals: ["golden retriever dog", "gray timber wolf", "tabby domestic cat", "spotted deer in forest", "colorful tropical bird", "green tree frog", "brown galloping horse", "african lion in savanna"],
+  vehicles: ["commercial passenger airplane", "modern passenger automobile", "large cargo freight truck", "ocean vessel freight ship", "supersonic military fighter jet", "two wheeled racing motorcycle", "city passenger transport bus", "yellow construction bulldozer"]
+};
+
+function App() {
+  const [activeTab, setActiveTab] = useState("lab"); // "lab", "batch"
+  const [health, setHealth] = useState({ status: "checking" });
+  const [samples, setSamples] = useState([]);
+  const [selectedSampleId, setSelectedSampleId] = useState("dog");
+  const [customImageBase64, setCustomImageBase64] = useState(null);
+  const [candidateLabelsInput, setCandidateLabelsInput] = useState(PRESETS.cifar10.join(", "));
+  const [groundTruth, setGroundTruth] = useState("dog");
+  
+  // Attack Hyperparameters (Paper Reference Default: eps_a = 1/255)
+  const [attackEps, setAttackEps] = useState(1.0 / 255.0);
+  const [attackSteps, setAttackSteps] = useState(10);
+  const [attackRandomInit, setAttackRandomInit] = useState(false);
+
+  // Defense Hyperparameters (Reference Defaults)
+  const [defenseEps, setDefenseEps] = useState(4.0 / 255.0);
+  const [defenseSteps, setDefenseSteps] = useState(5);
+  const [warmupSteps, setWarmupSteps] = useState(5);
+  const [numViews, setNumViews] = useState(2);
+  const [lambdaCm, setLambdaCm] = useState(4.0);
+  const [tempT, setTempT] = useState(0.5);
+  const [noiseSigma, setNoiseSigma] = useState(6.0 / 255.0);
+
+  // View mode toggles for perturbation visualization
+  const [showAdvPerturbation, setShowAdvPerturbation] = useState(false);
+  const [showDefPerturbation, setShowDefPerturbation] = useState(false);
+
+  // State for Pipeline Results
+  const [pipelineData, setPipelineData] = useState(null);
+  const [loadingAction, setLoadingAction] = useState(null); // "pipeline", "classify", "attack", "defend", "batch"
+  const [errorMessage, setErrorMessage] = useState(null);
+
+  // Batch Evaluation State
+  const [batchPreset, setBatchPreset] = useState("cifar10");
+  const [batchResult, setBatchResult] = useState(null);
+
+  // Check health and samples on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/health`)
+      .then(res => res.json())
+      .then(data => setHealth(data))
+      .catch(() => setHealth({ status: "offline", model: "CLIP ViT-B/32" }));
+
+    fetch(`${API_BASE}/api/samples`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.samples && data.samples.length > 0) {
+          setSamples(data.samples);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Update classes when sample changes
+  const handleSelectSample = (sampleId) => {
+    setSelectedSampleId(sampleId);
+    setCustomImageBase64(null);
+    const s = samples.find(x => x.id === sampleId);
+    if (s) {
+      setGroundTruth(s.ground_truth);
+      setCandidateLabelsInput(s.classes.join(", "));
+    }
+  };
+
+  const candidateClasses = useMemo(() => {
+    return candidateLabelsInput
+      .split(",")
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+  }, [candidateLabelsInput]);
+
+  // Handle custom image file upload
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCustomImageBase64(reader.result);
+      setSelectedSampleId(null);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Run full pipeline
+  const runPipeline = async () => {
+    setLoadingAction("pipeline");
+    setErrorMessage(null);
+    try {
+      const payload = {
+        sample_id: customImageBase64 ? null : selectedSampleId,
+        image_base64: customImageBase64,
+        candidate_labels: candidateClasses,
+        ground_truth: groundTruth,
+        epsilon_a: attackEps,
+        steps_a: attackSteps,
+        random_init: attackRandomInit,
+        epsilon_d: defenseEps,
+        steps_d: defenseSteps,
+        warmup_steps: warmupSteps,
+        num_views: numViews,
+        lambda_cm: lambdaCm,
+        temperature: tempT,
+        noise_sigma: noiseSigma
+      };
+
+      const res = await fetch(`${API_BASE}/api/pipeline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Pipeline failed");
+      }
+      const data = await res.json();
+      setPipelineData(data);
+    } catch (err) {
+      setErrorMessage(err.message);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  // Run batch evaluation
+  const runBatchBenchmark = async () => {
+    setLoadingAction("batch");
+    setErrorMessage(null);
+    try {
+      const form = new URLSearchParams();
+      form.append("dataset_preset", batchPreset);
+      form.append("epsilon_a", attackEps.toString());
+      form.append("steps_a", attackSteps.toString());
+      form.append("epsilon_d", defenseEps.toString());
+      form.append("steps_d", defenseSteps.toString());
+      form.append("warmup_steps", warmupSteps.toString());
+      form.append("num_views", numViews.toString());
+
+      const res = await fetch(`${API_BASE}/api/evaluate/batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: form.toString()
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Batch evaluation failed");
+      }
+      const data = await res.json();
+      setBatchResult(data);
+    } catch (err) {
+      setErrorMessage(err.message);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  // Helper for Top-5 Probability Bars
+  const renderProbabilityBars = (top5, groundTruthLabel, isAttacked = false) => {
+    return h("div", { className: "space-y-2 mt-3" },
+      top5.map((item, idx) => {
+        const isGT = item.label.toLowerCase() === groundTruthLabel.toLowerCase();
+        const barColor = isGT 
+          ? "bg-emerald-500" 
+          : (idx === 0 && isAttacked ? "bg-rose-500" : "bg-cyan-500/80");
+
+        return h("div", { key: item.label, className: "text-xs" },
+          h("div", { className: "flex justify-between items-center mb-1 text-[11px]" },
+            h("div", { className: "flex items-center gap-1.5 truncate max-w-[180px]" },
+              h("span", { className: "font-mono text-slate-500 w-3.5" }, `#${item.rank}`),
+              h("span", { className: `font-medium truncate ${isGT ? "text-emerald-400 font-semibold" : "text-slate-300"}` },
+                item.label
+              ),
+              isGT && h("span", { className: "text-[9px] px-1 py-0.2 bg-emerald-950 text-emerald-300 border border-emerald-700/60 rounded" }, "GT")
+            ),
+            h("div", { className: "font-mono text-slate-400 flex items-center gap-2" },
+              h("span", { className: "text-slate-500 text-[10px]" }, `z=${item.logit}`),
+              h("span", { className: `font-semibold ${isGT ? "text-emerald-300" : "text-slate-200"}` },
+                `${(item.probability * 100).toFixed(1)}%`
+              )
+            )
+          ),
+          h("div", { className: "h-2 w-full bg-slate-800/80 rounded-full overflow-hidden border border-slate-700/40" },
+            h("div", {
+              className: `h-full rounded-full transition-all duration-500 ${barColor}`,
+              style: { width: `${Math.min(100, item.probability * 100)}%` }
+            })
+          )
+        );
+      })
+    );
+  };
+
+  // Helper for Margin Meter
+  const renderMarginMeter = (margin) => {
+    const isPositive = margin >= 0;
+    return h("div", { className: "flex items-center justify-between p-2 rounded bg-slate-900/90 border border-slate-800 text-xs" },
+      h("span", { className: "text-slate-400 font-mono text-[11px]" }, "Semantic Margin m(x):"),
+      h("div", { className: "flex items-center gap-1.5 font-mono" },
+        h("span", { className: `font-bold text-sm ${isPositive ? "text-emerald-400" : "text-rose-400"}` },
+          `${isPositive ? "+" : ""}${margin.toFixed(4)}`
+        ),
+        h("span", { className: `text-[10px] px-1.5 py-0.5 rounded ${isPositive ? "bg-emerald-950 text-emerald-300 border border-emerald-800/60" : "bg-rose-950 text-rose-300 border border-rose-800/60"}` },
+          isPositive ? "Aligned" : "Inverted"
+        )
+      )
+    );
+  };
+
+  return h("div", { className: "min-h-screen flex flex-col bg-[#0b1020] text-[#e7edf8]" },
+    // -------------------------------------------------------------
+    // TOP NAVIGATION & STATUS BAR
+    // -------------------------------------------------------------
+    h("header", { className: "sticky top-0 z-30 bg-[#0d1424]/90 backdrop-blur-md border-b border-[#222f46] px-6 py-3.5" },
+      h("div", { className: "max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4" },
+        h("div", { className: "flex items-center gap-3" },
+          h("div", { className: "w-9 h-9 rounded-lg bg-emerald-950/80 border border-emerald-600/40 flex items-center justify-center text-emerald-400 font-bold shadow-lg shadow-emerald-950/50" },
+            "VLM"
+          ),
+          h("div", null,
+            h("h1", { className: "font-heading font-bold text-base tracking-tight text-white flex items-center gap-2" },
+              "Adversarial Robustness using PGD & Self-Calibrated Consistency (SCC)"
+            ),
+            h("p", { className: "text-xs text-slate-400" },
+              "Test-time consistency defense against white-box adversarial perturbations on CLIP ViT-B/32"
+            )
+          )
+        ),
+        // System status chip & Tab Switcher (Only Comparison Lab and Batch Benchmark)
+        h("div", { className: "flex items-center gap-3" },
+          h("div", { className: "flex items-center gap-2 text-xs font-mono bg-slate-900/90 border border-slate-800 px-3 py-1.5 rounded-md" },
+            h("span", { className: `w-2 h-2 rounded-full ${health.status === "ready" ? "bg-emerald-400 shadow-[0_0_8px_#34d399]" : "bg-amber-400"}` }),
+            h("span", { className: "text-slate-300" }, health.model || "CLIP ViT-B/32"),
+            h("span", { className: "text-slate-600" }, "|"),
+            h("span", { className: "text-slate-400" }, (health.device || "cpu").toUpperCase())
+          ),
+          h("div", { className: "flex bg-slate-900/80 p-1 rounded-lg border border-slate-800 text-xs font-medium" },
+            h("button", {
+              onClick: () => setActiveTab("lab"),
+              className: `px-4 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${activeTab === "lab" ? "bg-emerald-600 text-white shadow font-semibold" : "text-slate-400 hover:text-white"}`
+            }, "🔬 Comparison Lab"),
+            h("button", {
+              onClick: () => setActiveTab("batch"),
+              className: `px-4 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${activeTab === "batch" ? "bg-emerald-600 text-white shadow font-semibold" : "text-slate-400 hover:text-white"}`
+            }, "📊 Batch Benchmark")
+          )
+        )
+      )
+    ),
+
+    // Error Alert Banner
+    errorMessage && h("div", { className: "bg-rose-950/80 border-b border-rose-800 px-6 py-2.5 text-xs text-rose-200 flex items-center justify-between" },
+      h("span", null, `⚠️ Error: ${errorMessage}`),
+      h("button", { onClick: () => setErrorMessage(null), className: "text-rose-400 hover:text-white font-bold ml-4" }, "✕")
+    ),
+
+    // -------------------------------------------------------------
+    // MAIN CONTENT
+    // -------------------------------------------------------------
+    h("main", { className: "flex-1 max-w-7xl w-full mx-auto p-6 space-y-6" },
+
+      // ===========================================================
+      // TAB 1: COMPARISON LAB
+      // ===========================================================
+      activeTab === "lab" && h("div", { className: "space-y-6" },
+        // Top Control Grid
+        h("div", { className: "grid grid-cols-1 lg:grid-cols-12 gap-6" },
+          // Left Column: Image Selection & Classes (5 cols)
+          h("div", { className: "lg:col-span-5 bg-[#10182a] border border-[#222f46] rounded-xl p-5 space-y-4 shadow-xl" },
+            h("div", { className: "flex items-center justify-between border-b border-slate-800 pb-3" },
+              h("h2", { className: "font-heading font-semibold text-sm text-slate-100 flex items-center gap-2" },
+                "1. Input Image & Taxonomy"
+              ),
+              h("span", { className: "text-[11px] font-mono text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40" },
+                "CLIP ViT-B/32"
+              )
+            ),
+
+            // Sample picker buttons
+            h("div", null,
+              h("label", { className: "block text-xs font-medium text-slate-400 mb-2" }, "Curated Benchmark Samples:"),
+              h("div", { className: "grid grid-cols-3 gap-2" },
+                (samples.length > 0 ? samples : [
+                  { id: "dog", name: "Dog" },
+                  { id: "wolf", name: "Wolf" },
+                  { id: "airplane", name: "Airplane" },
+                  { id: "automobile", name: "Car" },
+                  { id: "cat", name: "Cat" },
+                  { id: "ship", name: "Ship" }
+                ]).map(s => h("button", {
+                  key: s.id,
+                  onClick: () => handleSelectSample(s.id),
+                  className: `px-2.5 py-2 text-xs rounded-lg border font-medium transition-all text-center truncate ${selectedSampleId === s.id && !customImageBase64 ? "bg-emerald-600/20 border-emerald-500 text-emerald-300 font-semibold" : "bg-slate-900/60 border-slate-800 text-slate-300 hover:border-slate-700"}`
+                }, s.name))
+              )
+            ),
+
+            // Custom Upload
+            h("div", null,
+              h("label", { className: "block text-xs font-medium text-slate-400 mb-1.5" }, "Or Upload Custom Image:"),
+              h("input", {
+                type: "file",
+                accept: "image/*",
+                onChange: handleFileUpload,
+                className: "block w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 cursor-pointer bg-slate-900/50 p-1.5 rounded-lg border border-slate-800"
+              })
+            ),
+
+            // Candidate Classes
+            h("div", null,
+              h("div", { className: "flex justify-between items-center mb-1.5" },
+                h("label", { className: "text-xs font-medium text-slate-400" }, "Candidate Classes:"),
+                h("div", { className: "flex gap-1 text-[10px]" },
+                  h("button", {
+                    onClick: () => { setCandidateLabelsInput(PRESETS.cifar10.join(", ")); setGroundTruth("dog"); },
+                    className: "px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+                  }, "CIFAR-10"),
+                  h("button", {
+                    onClick: () => { setCandidateLabelsInput(PRESETS.animals.join(", ")); setGroundTruth("golden retriever dog"); },
+                    className: "px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+                  }, "Animals"),
+                  h("button", {
+                    onClick: () => { setCandidateLabelsInput(PRESETS.vehicles.join(", ")); setGroundTruth("commercial passenger airplane"); },
+                    className: "px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"
+                  }, "Vehicles")
+                )
+              ),
+              h("textarea", {
+                rows: 2,
+                value: candidateLabelsInput,
+                onChange: e => setCandidateLabelsInput(e.target.value),
+                className: "w-full text-xs bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-slate-200 font-mono focus:border-emerald-500 focus:outline-none"
+              })
+            ),
+
+            // Ground Truth
+            h("div", { className: "flex items-center justify-between" },
+              h("label", { className: "text-xs font-medium text-slate-400" }, "Ground Truth Label:"),
+              h("select", {
+                value: groundTruth,
+                onChange: e => setGroundTruth(e.target.value),
+                className: "text-xs bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-emerald-400 font-mono font-semibold focus:border-emerald-500 focus:outline-none max-w-[200px]"
+              },
+                candidateClasses.map(c => h("option", { key: c, value: c }, c))
+              )
+            )
+          ),
+
+          // Right Column: Hyperparameters & Execution Trigger (7 cols)
+          h("div", { className: "lg:col-span-7 bg-[#10182a] border border-[#222f46] rounded-xl p-5 space-y-4 shadow-xl flex flex-col justify-between" },
+            h("div", { className: "space-y-4" },
+              h("div", { className: "flex items-center justify-between border-b border-slate-800 pb-3" },
+                h("h2", { className: "font-heading font-semibold text-sm text-slate-100 flex items-center gap-2" },
+                  "2. Attack & Defense Hyperparameters"
+                ),
+                h("span", { className: "text-[11px] font-mono text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/40" },
+                  "Reference Configuration"
+                )
+              ),
+
+              // Attack & Defense Grid
+              h("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-4 text-xs" },
+                // Attack parameters box
+                h("div", { className: "p-3.5 rounded-lg bg-slate-900/80 border border-rose-950/60 space-y-3" },
+                  h("div", { className: "flex items-center justify-between text-rose-400 font-semibold border-b border-slate-800 pb-1.5" },
+                    h("span", null, "⚔️ PGD Adversarial Attack"),
+                    h("span", { className: "font-mono text-[10px]" }, "White-Box L∞")
+                  ),
+                  h("div", null,
+                    h("div", { className: "flex justify-between text-slate-400 mb-1" },
+                      h("span", null, "Attack Budget (εₐ):"),
+                      h("span", { className: "font-mono font-semibold text-rose-300" }, `${(attackEps * 255).toFixed(1)}/255 (${attackEps.toFixed(4)})`)
+                    ),
+                    h("input", {
+                      type: "range",
+                      min: 1 / 255,
+                      max: 16 / 255,
+                      step: 1 / 255,
+                      value: attackEps,
+                      onChange: e => setAttackEps(parseFloat(e.target.value)),
+                      className: "w-full accent-rose-500 cursor-pointer"
+                    }),
+                    h("div", { className: "flex justify-between text-[10px] text-slate-500 mt-0.5" },
+                      h("span", null, "1/255"),
+                      h("span", null, "4/255 (Standard)"),
+                      h("span", null, "16/255")
+                    )
+                  ),
+                  h("div", { className: "flex justify-between items-center" },
+                    h("span", { className: "text-slate-400" }, "PGD Steps:"),
+                    h("div", { className: "flex items-center gap-2" },
+                      h("input", {
+                        type: "number",
+                        min: 1,
+                        max: 20,
+                        value: attackSteps,
+                        onChange: e => setAttackSteps(parseInt(e.target.value) || 1),
+                        className: "w-14 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-center font-mono text-slate-200"
+                      }),
+                      h("span", { className: "text-slate-500 text-[11px]" }, "iters")
+                    )
+                  ),
+                  h("div", { className: "flex items-center justify-between" },
+                    h("span", { className: "text-slate-400" }, "Random Init (L∞ Ball):"),
+                    h("input", {
+                      type: "checkbox",
+                      checked: attackRandomInit,
+                      onChange: e => setAttackRandomInit(e.target.checked),
+                      className: "accent-rose-500 h-4 w-4 rounded"
+                    })
+                  )
+                ),
+
+                // Defense parameters box
+                h("div", { className: "p-3.5 rounded-lg bg-slate-900/80 border border-emerald-950/60 space-y-3" },
+                  h("div", { className: "flex items-center justify-between text-emerald-400 font-semibold border-b border-slate-800 pb-1.5" },
+                    h("span", null, "🛡️ SCC Test-Time Defense"),
+                    h("span", { className: "font-mono text-[10px]" }, "Self-Calibrated")
+                  ),
+                  h("div", null,
+                    h("div", { className: "flex justify-between text-slate-400 mb-1" },
+                      h("span", null, "Defense Budget (ε_d):"),
+                      h("span", { className: "font-mono font-semibold text-emerald-300" }, `${(defenseEps * 255).toFixed(1)}/255 (${defenseEps.toFixed(4)})`)
+                    ),
+                    h("input", {
+                      type: "range",
+                      min: 1 / 255,
+                      max: 8 / 255,
+                      step: 1 / 255,
+                      value: defenseEps,
+                      onChange: e => setDefenseEps(parseFloat(e.target.value)),
+                      className: "w-full accent-emerald-500 cursor-pointer"
+                    })
+                  ),
+                  h("div", { className: "grid grid-cols-2 gap-2 text-[11px]" },
+                    h("div", null,
+                      h("span", { className: "text-slate-400 block" }, "SCC Steps (S):"),
+                      h("input", {
+                        type: "number",
+                        min: 1,
+                        max: 10,
+                        value: defenseSteps,
+                        onChange: e => setDefenseSteps(parseInt(e.target.value) || 1),
+                        className: "w-full mt-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono text-center"
+                      })
+                    ),
+                    h("div", null,
+                      h("span", { className: "text-slate-400 block" }, "Warmup (S_w):"),
+                      h("input", {
+                        type: "number",
+                        min: 0,
+                        max: 10,
+                        value: warmupSteps,
+                        onChange: e => setWarmupSteps(parseInt(e.target.value) || 0),
+                        className: "w-full mt-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 font-mono text-center"
+                      })
+                    )
+                  ),
+                  h("div", { className: "grid grid-cols-3 gap-2 text-[10px] text-slate-400 border-t border-slate-800 pt-2" },
+                    h("div", null,
+                      h("span", null, "λ_cm = "),
+                      h("span", { className: "text-slate-200 font-mono" }, lambdaCm.toFixed(1))
+                    ),
+                    h("div", null,
+                      h("span", null, "Temp T = "),
+                      h("span", { className: "text-slate-200 font-mono" }, tempT.toFixed(1))
+                    ),
+                    h("div", null,
+                      h("span", null, "Views V = "),
+                      h("span", { className: "text-slate-200 font-mono" }, numViews)
+                    )
+                  )
+                )
+              )
+            ),
+
+            // Execution Buttons
+            h("div", { className: "pt-2 flex items-center gap-3" },
+              h("button", {
+                onClick: runPipeline,
+                disabled: loadingAction !== null,
+                className: "flex-1 py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-lg text-sm shadow-lg shadow-emerald-950/60 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              },
+                loadingAction === "pipeline" 
+                  ? [h("span", { key: "spin", className: "animate-spin" }, "⚙️"), " Computing Gradients (PGD & SCC)..."]
+                  : [h("span", { key: "bolt" }, "⚡"), " Run Full Research Pipeline (Clean → PGD → SCC)"]
+              )
+            )
+          )
+        ),
+
+        // -----------------------------------------------------------
+        // EXECUTIVE SUMMARY METRICS BANNER
+        // -----------------------------------------------------------
+        pipelineData && h("div", { className: "bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-xl space-y-3" },
+          h("div", { className: "flex flex-wrap items-center justify-between gap-3 text-xs" },
+            h("div", { className: "flex items-center gap-3" },
+              h("span", { className: "font-heading font-bold text-slate-300 uppercase tracking-wider text-[11px]" },
+                "Comparison Summary:"
+              ),
+              h("div", { className: "flex items-center gap-1.5" },
+                h("span", { className: "text-slate-400" }, "Ground Truth:"),
+                h("span", { className: "px-2 py-0.5 bg-slate-800 text-emerald-400 font-mono font-bold rounded" },
+                  pipelineData.ground_truth
+                )
+              )
+            ),
+            h("div", { className: "flex items-center gap-3 font-mono" },
+              h("div", { className: `px-2.5 py-1 rounded-md text-xs font-bold border ${pipelineData.attack_success ? "bg-rose-950/80 border-rose-800 text-rose-300" : "bg-slate-800 border-slate-700 text-slate-300"}` },
+                pipelineData.attack_success ? "💥 PGD FOOLED MODEL" : "🛡️ ATTACK FAILED"
+              ),
+              h("div", { className: `px-2.5 py-1 rounded-md text-xs font-bold border ${pipelineData.defense_recovered ? "bg-emerald-950/80 border-emerald-800 text-emerald-300" : "bg-slate-800 border-slate-700 text-slate-300"}` },
+                pipelineData.defense_recovered ? "🌟 SCC RECOVERED PREDICTION" : "⚠️ NOT RECOVERED"
+              ),
+              h("div", { className: "text-slate-400 text-xs font-mono" },
+                `Total Pipeline: ${pipelineData.total_time_ms} ms`
+              )
+            )
+          ),
+
+          // Semantic Margin Trajectory Tracker
+          h("div", { className: "grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-950/60 p-3 rounded-lg border border-slate-800/80 text-xs font-mono" },
+            h("div", { className: "border-r border-slate-800 pr-3" },
+              h("span", { className: "text-slate-500 text-[10px] block" }, "1. CLEAN MARGIN"),
+              h("div", { className: "text-emerald-400 font-bold text-base mt-0.5" },
+                `+${pipelineData.clean.semantic_margin.toFixed(4)}`
+              ),
+              h("span", { className: "text-slate-400 text-[11px]" }, `Pred: ${pipelineData.clean.predicted_label}`)
+            ),
+            h("div", { className: "border-r border-slate-800 pr-3" },
+              h("span", { className: "text-slate-500 text-[10px] block" }, "2. ATTACKED MARGIN"),
+              h("div", { className: `font-bold text-base mt-0.5 ${pipelineData.attacked.semantic_margin < 0 ? "text-rose-400" : "text-amber-400"}` },
+                `${pipelineData.attacked.semantic_margin >= 0 ? "+" : ""}${pipelineData.attacked.semantic_margin.toFixed(4)}`
+              ),
+              h("span", { className: "text-slate-400 text-[11px]" }, `Shifted: ${pipelineData.attacked.predicted_label}`)
+            ),
+            h("div", { className: "border-r border-slate-800 pr-3" },
+              h("span", { className: "text-slate-500 text-[10px] block" }, "3. DEFENDED MARGIN"),
+              h("div", { className: `font-bold text-base mt-0.5 ${pipelineData.defended.semantic_margin >= 0 ? "text-emerald-400" : "text-amber-400"}` },
+                `${pipelineData.defended.semantic_margin >= 0 ? "+" : ""}${pipelineData.defended.semantic_margin.toFixed(4)}`
+              ),
+              h("span", { className: "text-slate-400 text-[11px]" }, `Restored: ${pipelineData.defended.predicted_label}`)
+            ),
+            h("div", null,
+              h("span", { className: "text-slate-500 text-[10px] block" }, "RECOVERY MARGIN GAIN (Δm)"),
+              h("div", { className: `font-bold text-base mt-0.5 ${pipelineData.summary.margin_gain > 0 ? "text-cyan-400" : "text-slate-400"}` },
+                `${pipelineData.summary.margin_gain > 0 ? "+" : ""}${pipelineData.summary.margin_gain.toFixed(4)}`
+              ),
+              h("span", { className: "text-slate-400 text-[11px]" }, "SCC Repulsion Effect")
+            )
+          )
+        ),
+
+        // -----------------------------------------------------------
+        // 3-STAGE SIDE-BY-SIDE CARDS
+        // -----------------------------------------------------------
+        pipelineData && h("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-6" },
+          // STAGE 1: CLEAN CLIP BASELINE
+          h("div", { className: "bg-[#10182a] border border-[#222f46] rounded-xl overflow-hidden shadow-xl flex flex-col" },
+            h("div", { className: "px-4 py-3 bg-slate-900/80 border-b border-slate-800 flex justify-between items-center" },
+              h("div", null,
+                h("h3", { className: "font-heading font-bold text-sm text-slate-200" }, "Stage 1: Clean Baseline"),
+                h("span", { className: "text-[10px] text-slate-400 font-mono" }, "Zero-shot CLIP ViT-B/32")
+              ),
+              h("span", { className: "text-[11px] font-mono text-slate-400" }, `${pipelineData.clean.execution_time_ms} ms`)
+            ),
+            h("div", { className: "p-4 space-y-3 flex-1 flex flex-col justify-between" },
+              h("div", { className: "space-y-3" },
+                // Image container
+                h("div", { className: "relative aspect-square w-full rounded-lg overflow-hidden border border-slate-800 bg-slate-950 flex items-center justify-center" },
+                  h("img", {
+                    src: pipelineData.clean.image_base64,
+                    alt: "Clean Image",
+                    className: "w-full h-full object-contain"
+                  }),
+                  h("div", { className: "absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/70 backdrop-blur-sm text-[10px] font-mono text-slate-300" },
+                    "Clean Input x"
+                  )
+                ),
+                // Prediction pill
+                h("div", { className: "p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex justify-between items-center text-xs" },
+                  h("div", null,
+                    h("span", { className: "text-slate-500 text-[10px] block" }, "Predicted Class:"),
+                    h("span", { className: "font-heading font-bold text-sm text-white" }, pipelineData.clean.predicted_label)
+                  ),
+                  h("div", { className: "text-right" },
+                    h("span", { className: "text-slate-500 text-[10px] block" }, "Confidence:"),
+                    h("span", { className: "font-mono font-bold text-emerald-400" }, `${(pipelineData.clean.confidence * 100).toFixed(1)}%`)
+                  )
+                ),
+                renderMarginMeter(pipelineData.clean.semantic_margin)
+              ),
+              // Top-5 distribution
+              h("div", { className: "border-t border-slate-800 pt-3" },
+                h("span", { className: "text-[11px] font-mono text-slate-400 uppercase tracking-wider block" }, "Top-5 Probabilities:"),
+                renderProbabilityBars(pipelineData.clean.top5_predictions, pipelineData.ground_truth, false)
+              )
+            )
+          ),
+
+          // STAGE 2: PGD ADVERSARIAL ATTACK
+          h("div", { className: "bg-[#10182a] border border-rose-950/80 rounded-xl overflow-hidden shadow-xl flex flex-col" },
+            h("div", { className: "px-4 py-3 bg-rose-950/40 border-b border-rose-900/50 flex justify-between items-center" },
+              h("div", null,
+                h("h3", { className: "font-heading font-bold text-sm text-rose-300 flex items-center gap-1.5" },
+                  "Stage 2: PGD Attack",
+                  h("span", { className: "text-[10px] px-1.5 py-0.2 bg-rose-900/60 text-rose-200 border border-rose-700/60 rounded" }, "Untargeted")
+                ),
+                h("span", { className: "text-[10px] text-slate-400 font-mono" }, `εₐ=${pipelineData.attacked.linf_pixel}/255`)
+              ),
+              h("span", { className: "text-[11px] font-mono text-slate-400" }, `${pipelineData.attacked.execution_time_ms} ms`)
+            ),
+            h("div", { className: "p-4 space-y-3 flex-1 flex flex-col justify-between" },
+              h("div", { className: "space-y-3" },
+                // Image container with toggle
+                h("div", { className: "relative aspect-square w-full rounded-lg overflow-hidden border border-rose-900/40 bg-slate-950 flex items-center justify-center" },
+                  h("img", {
+                    src: showAdvPerturbation ? pipelineData.attacked.perturbation_base64 : pipelineData.attacked.image_base64,
+                    alt: "Adversarial Image",
+                    className: "w-full h-full object-contain"
+                  }),
+                  h("button", {
+                    onClick: () => setShowAdvPerturbation(!showAdvPerturbation),
+                    className: "absolute top-2 right-2 px-2 py-1 rounded bg-black/80 hover:bg-black text-[10px] font-mono text-slate-300 border border-slate-700 shadow"
+                  }, showAdvPerturbation ? "Show Image" : "Show Perturbation (15x)")
+                ),
+                // Prediction pill
+                h("div", { className: "p-2.5 rounded-lg bg-slate-900 border border-rose-950/60 flex justify-between items-center text-xs" },
+                  h("div", null,
+                    h("span", { className: "text-slate-500 text-[10px] block" }, "Adversarial Prediction:"),
+                    h("span", { className: "font-heading font-bold text-sm text-rose-400" }, pipelineData.attacked.predicted_label)
+                  ),
+                  h("div", { className: "text-right" },
+                    h("span", { className: "text-slate-500 text-[10px] block" }, "L∞ / L2 Norm:"),
+                    h("span", { className: "font-mono font-bold text-rose-300 text-[11px]" }, `${pipelineData.attacked.linf_pixel}/255 | ${pipelineData.attacked.l2_norm.toFixed(2)}`)
+                  )
+                ),
+                renderMarginMeter(pipelineData.attacked.semantic_margin)
+              ),
+              // Top-5 distribution
+              h("div", { className: "border-t border-slate-800 pt-3" },
+                h("span", { className: "text-[11px] font-mono text-slate-400 uppercase tracking-wider block" }, "Top-5 Probabilities (Attacked):"),
+                renderProbabilityBars(pipelineData.attacked.top5_predictions, pipelineData.ground_truth, true)
+              )
+            )
+          ),
+
+          // STAGE 3: SCC TEST-TIME DEFENSE
+          h("div", { className: "bg-[#10182a] border border-emerald-950/80 rounded-xl overflow-hidden shadow-xl flex flex-col" },
+            h("div", { className: "px-4 py-3 bg-emerald-950/40 border-b border-emerald-900/50 flex justify-between items-center" },
+              h("div", null,
+                h("h3", { className: "font-heading font-bold text-sm text-emerald-300 flex items-center gap-1.5" },
+                  "Stage 3: SCC Defense",
+                  h("span", { className: "text-[10px] px-1.5 py-0.2 bg-emerald-900/60 text-emerald-200 border border-emerald-700/60 rounded" }, "Test-Time")
+                ),
+                h("span", { className: "text-[10px] text-slate-400 font-mono" }, `ε_d=${pipelineData.defended.linf_pixel}/255`)
+              ),
+              h("span", { className: "text-[11px] font-mono text-slate-400" }, `${pipelineData.defended.execution_time_ms} ms`)
+            ),
+            h("div", { className: "p-4 space-y-3 flex-1 flex flex-col justify-between" },
+              h("div", { className: "space-y-3" },
+                // Image container with toggle
+                h("div", { className: "relative aspect-square w-full rounded-lg overflow-hidden border border-emerald-900/40 bg-slate-950 flex items-center justify-center" },
+                  h("img", {
+                    src: showDefPerturbation ? pipelineData.defended.perturbation_base64 : pipelineData.defended.image_base64,
+                    alt: "Defended Image",
+                    className: "w-full h-full object-contain"
+                  }),
+                  h("button", {
+                    onClick: () => setShowDefPerturbation(!showDefPerturbation),
+                    className: "absolute top-2 right-2 px-2 py-1 rounded bg-black/80 hover:bg-black text-[10px] font-mono text-slate-300 border border-slate-700 shadow"
+                  }, showDefPerturbation ? "Show Image" : "Show Corrective (15x)")
+                ),
+                // Prediction pill
+                h("div", { className: "p-2.5 rounded-lg bg-slate-900 border border-emerald-950/60 flex justify-between items-center text-xs" },
+                  h("div", null,
+                    h("span", { className: "text-slate-500 text-[10px] block" }, "Defended Prediction:"),
+                    h("span", { className: "font-heading font-bold text-sm text-emerald-300" }, pipelineData.defended.predicted_label)
+                  ),
+                  h("div", { className: "text-right" },
+                    h("span", { className: "text-slate-500 text-[10px] block" }, "Status:"),
+                    h("span", { className: `font-mono font-bold text-xs ${pipelineData.defense_recovered ? "text-emerald-400" : "text-amber-400"}` },
+                      pipelineData.defense_recovered ? "RECOVERED ✓" : "STABILIZED"
+                    )
+                  )
+                ),
+                renderMarginMeter(pipelineData.defended.semantic_margin)
+              ),
+              // Top-5 distribution
+              h("div", { className: "border-t border-slate-800 pt-3" },
+                h("span", { className: "text-[11px] font-mono text-slate-400 uppercase tracking-wider block" }, "Top-5 Probabilities (Defended):"),
+                renderProbabilityBars(pipelineData.defended.top5_predictions, pipelineData.ground_truth, false)
+              )
+            )
+          )
+        )
+      ),
+
+      // ===========================================================
+      // TAB 2: BATCH EVALUATION BENCHMARK
+      // ===========================================================
+      activeTab === "batch" && h("div", { className: "space-y-6" },
+        h("div", { className: "bg-[#10182a] border border-[#222f46] rounded-xl p-5 shadow-xl space-y-4" },
+          h("div", { className: "flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4" },
+            h("div", null,
+              h("h2", { className: "font-heading font-bold text-base text-white" }, "Zero-Shot Adversarial Robustness Benchmarking"),
+              h("p", { className: "text-xs text-slate-400" }, "Evaluate Clean Accuracy, Robust Accuracy (under PGD), Defended Accuracy (under SCC), Attack Success Rate (ASR), and Defense Recovery Rate (DRR).")
+            ),
+            h("div", { className: "flex items-center gap-3" },
+              h("select", {
+                value: batchPreset,
+                onChange: e => setBatchPreset(e.target.value),
+                className: "text-xs bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 font-mono"
+              },
+                h("option", { value: "cifar10" }, "CIFAR-10 Subset (Objects)"),
+                h("option", { value: "animals" }, "Fine-Grained Animals"),
+                h("option", { value: "all" }, "All Benchmark Samples")
+              ),
+              h("button", {
+                onClick: runBatchBenchmark,
+                disabled: loadingAction === "batch",
+                className: "py-2 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg shadow-lg flex items-center gap-2 disabled:opacity-50"
+              },
+                loadingAction === "batch" ? "⏳ Running Benchmark..." : "🚀 Run Batch Evaluation"
+              )
+            )
+          ),
+
+          // KPI Cards
+          batchResult && h("div", { className: "grid grid-cols-2 md:grid-cols-5 gap-4 pt-2" },
+            h("div", { className: "bg-slate-900/90 border border-slate-800 p-4 rounded-xl text-center" },
+              h("span", { className: "text-xs text-slate-400 block font-mono" }, "Clean Accuracy"),
+              h("div", { className: "font-heading font-extrabold text-2xl text-emerald-400 mt-1" }, `${batchResult.clean_accuracy}%`),
+              h("span", { className: "text-[10px] text-slate-500" }, "Zero-Shot CLIP Baseline")
+            ),
+            h("div", { className: "bg-slate-900/90 border border-rose-950/60 p-4 rounded-xl text-center" },
+              h("span", { className: "text-xs text-rose-400 block font-mono" }, "Robust Accuracy"),
+              h("div", { className: "font-heading font-extrabold text-2xl text-rose-400 mt-1" }, `${batchResult.robust_accuracy}%`),
+              h("span", { className: "text-[10px] text-slate-500" }, "Under PGD Attack (No Defense)")
+            ),
+            h("div", { className: "bg-slate-900/90 border border-cyan-950/60 p-4 rounded-xl text-center" },
+              h("span", { className: "text-xs text-cyan-400 block font-mono" }, "Defended Accuracy"),
+              h("div", { className: "font-heading font-extrabold text-2xl text-cyan-400 mt-1" }, `${batchResult.defended_accuracy}%`),
+              h("span", { className: "text-[10px] text-slate-500" }, "With SCC Test-Time Defense")
+            ),
+            h("div", { className: "bg-slate-900/90 border border-rose-950/60 p-4 rounded-xl text-center" },
+              h("span", { className: "text-xs text-rose-300 block font-mono" }, "Attack Success Rate (ASR)"),
+              h("div", { className: "font-heading font-extrabold text-2xl text-rose-300 mt-1" }, `${batchResult.attack_success_rate}%`),
+              h("span", { className: "text-[10px] text-slate-500" }, "% Clean Correct Fooled")
+            ),
+            h("div", { className: "bg-slate-900/90 border border-emerald-950/60 p-4 rounded-xl text-center" },
+              h("span", { className: "text-xs text-emerald-300 block font-mono" }, "Defense Recovery (DRR)"),
+              h("div", { className: "font-heading font-extrabold text-2xl text-emerald-300 mt-1" }, `${batchResult.defense_recovery_rate}%`),
+              h("span", { className: "text-[10px] text-slate-500" }, "% Fooled Recovered by SCC")
+            )
+          ),
+
+          // Per-sample table
+          batchResult && h("div", { className: "border border-slate-800 rounded-lg overflow-x-auto mt-4" },
+            h("table", { className: "w-full text-left text-xs font-mono" },
+              h("thead", { className: "bg-slate-950 text-slate-400 border-b border-slate-800" },
+                h("tr", null,
+                  h("th", { className: "p-3" }, "Sample"),
+                  h("th", { className: "p-3" }, "Ground Truth"),
+                  h("th", { className: "p-3" }, "Clean Pred"),
+                  h("th", { className: "p-3" }, "Clean Margin"),
+                  h("th", { className: "p-3" }, "Attacked Pred"),
+                  h("th", { className: "p-3" }, "Attacked Margin"),
+                  h("th", { className: "p-3" }, "Defended Pred"),
+                  h("th", { className: "p-3" }, "Defended Margin"),
+                  h("th", { className: "p-3" }, "Outcome")
+                )
+              ),
+              h("tbody", { className: "divide-y divide-slate-800/60 bg-slate-900/40" },
+                batchResult.samples.map(s => {
+                  return h("tr", { key: s.id, className: "hover:bg-slate-800/30" },
+                    h("td", { className: "p-3 font-semibold text-slate-200" }, s.name),
+                    h("td", { className: "p-3 text-emerald-400 font-bold" }, s.ground_truth),
+                    h("td", { className: "p-3 text-slate-300" }, s.clean_pred),
+                    h("td", { className: "p-3 text-slate-400" }, `+${s.clean_margin.toFixed(4)}`),
+                    h("td", { className: `p-3 font-medium ${s.adv_correct ? "text-slate-300" : "text-rose-400 font-bold"}` }, s.adv_pred),
+                    h("td", { className: "p-3 font-mono text-slate-400" }, `${s.adv_margin >= 0 ? "+" : ""}${s.adv_margin.toFixed(4)}`),
+                    h("td", { className: `p-3 font-medium ${s.def_correct ? "text-emerald-400 font-bold" : "text-slate-400"}` }, s.def_pred),
+                    h("td", { className: "p-3 font-mono text-slate-400" }, `${s.def_margin >= 0 ? "+" : ""}${s.def_margin.toFixed(4)}`),
+                    h("td", { className: "p-3" },
+                      s.defense_recovered 
+                        ? h("span", { className: "px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 text-[10px]" }, "RECOVERED")
+                        : (s.clean_correct && !s.adv_correct ? h("span", { className: "px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800 text-[10px]" }, "FOOLED") : h("span", { className: "px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]" }, "PASS"))
+                    )
+                  );
+                })
+              )
+            )
+          )
+        )
+      )
+    ),
+
+    // -------------------------------------------------------------
+    // FOOTER
+    // -------------------------------------------------------------
+    h("footer", { className: "border-t border-[#222f46] px-6 py-4 bg-[#0d1424] text-slate-500 text-xs font-mono flex flex-wrap justify-between items-center gap-3" },
+      h("span", null, "Adversarial Robustness Research Platform · CLIP ViT-B/32 · Frozen Weights · Differentiable Gradient Ascent"),
+      h("span", { className: "text-slate-400" }, "FastAPI :8000 · React JS & Tailwind CSS :4173")
+    )
+  );
+}
+
+// Render into DOM
+const rootElement = document.getElementById("root");
+if (rootElement) {
+  const root = ReactDOM.createRoot(rootElement);
+  root.render(h(App));
+}

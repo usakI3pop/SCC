@@ -1,10 +1,15 @@
 {
-  "name": "sentinel-ai-research-lab",
+  "name": "vlm-adversarial-robustness-scc",
   "private": true,
-  "version": "0.1.0",
-  "description": "Local-first academic interface and PyTorch backend for multimodal robustness research",
+  "version": "1.0.0",
+  "description": "Adversarial Robustness of Vision-Language Models using PGD and Self-Calibrated Consistency (Liu et al., ICML 2026)",
   "scripts": {
-    "serve": "node frontend/serve.mjs"
+    "start": "powershell -ExecutionPolicy Bypass -File ./start.ps1",
+    "serve": "node frontend/serve.mjs",
+    "backend": "python -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload",
+    "test": "python -m pytest backend/tests -v"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }
